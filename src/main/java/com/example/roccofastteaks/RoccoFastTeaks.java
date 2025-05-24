@@ -99,9 +99,12 @@ public class RoccoFastTeaks extends Plugin {
         if (client.getEnergy() > 5000 || (client.getVarbitValue(Varbits.RUN_SLOWED_DEPLETION_ACTIVE) == 1 )) {
             return;
         }
-        Widget stam = Inventory.search().nameContains("Stamina").result().get(0);
+        List<Widget> stam = Inventory.search().nameContains("Stamina").result();
+        if (stam.isEmpty()) {
+            EthanApiPlugin.stopPlugin(this);
+        }
         MousePackets.queueClickPacket();
-        InventoryInteraction.useItem(stam, "Drink");
+        InventoryInteraction.useItem(stam.get(0), "Drink");
     }
 
     private void specIfAvailable() {

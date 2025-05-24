@@ -1,0 +1,30 @@
+ int tick_count = client.getTickCount();
+
+        if(isBankOpen()) {
+            Widget depositInventory = client.getWidget(WidgetInfo.BANK_DEPOSIT_INVENTORY);
+            if (depositInventory != null) {
+                MousePackets.queueClickPacket();
+                WidgetPackets.queueWidgetAction(depositInventory, "Deposit inventory");
+            }
+            Bank.search().withName("Raw karambwan").first().ifPresentOrElse(item -> {
+                BankInteraction.useItem(item, "Withdraw-all");
+            }, () -> {
+                client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "no raw karambwans", null);
+                EthanApiPlugin.stopPlugin(this);
+            });
+            MovementPackets.queueMovement(client.getLocalPlayer().getWorldLocation());
+            return;
+        }
+
+        Optional<TileObject> fire = TileObjects.search().withName("Fire").nearestToPlayer();
+
+        Inventory.search().withName("Raw karambwan").first().ifPresentOrElse(item -> {
+
+        MousePackets.queueClickPacket();
+        WidgetPackets.queueResumePause((270 << 16) | 14, 1);
+
+            MousePackets.queueClickPacket();
+            MousePackets.queueClickPacket();
+            ObjectPackets.queueWidgetOnTileObject(item, fire.get());
+
+        }, this::findBank);

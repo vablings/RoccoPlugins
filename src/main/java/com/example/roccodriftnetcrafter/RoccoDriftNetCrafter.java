@@ -2,7 +2,9 @@ package com.example.roccodriftnetcrafter;
 
 
 import com.example.EthanApiPlugin.Collections.*;
+import com.example.EthanApiPlugin.Collections.query.ItemQuery;
 import com.example.EthanApiPlugin.Collections.query.TileObjectQuery;
+import com.example.EthanApiPlugin.Collections.query.WidgetQuery;
 import com.example.EthanApiPlugin.EthanApiPlugin;
 import com.example.InteractionApi.BankInteraction;
 import com.example.InteractionApi.InventoryInteraction;
@@ -11,6 +13,7 @@ import com.example.InteractionApi.TileObjectInteraction;
 import com.example.Packets.MousePackets;
 import com.example.Packets.MovementPackets;
 import com.example.Packets.WidgetPackets;
+import com.example.rocconaugas.RoccoNaugas;
 import com.google.inject.Inject;
 import com.google.inject.Provides;
 import lombok.Getter;
@@ -43,76 +46,147 @@ public class RoccoDriftNetCrafter extends Plugin {
     @Inject
     private Client client;
 
-    private boolean isInteractingWithLoom  = false;
-    private int ticksSinceLastLoomClick = 0;
+    private int idleTicks = 0;
+
+
+    private ItemQuery driftNetsInBank;
+    private ItemQuery juteInBank;
+    private ItemQuery juteInInventory;
+
+
+
+    public State state = State.BANKING_STAMINA;
+
+    enum State {
+        CRAFTING,
+        GOING_T0_BANK,
+        BANKING,
+        BANKING_STAMINA,
+        RETURNING,
+        STUCK,
+    }
+
+
+    @Override
+    protected void startUp() throws Exception {
+        state = State.BANKING;
+    }
+
+    private void evaluteState() {
+        switch(state) {
+            case CRAFTING:
+                if(!client.getLocalPlayer().isInteracting() && juteInInventory.result().isEmpty()) {
+
+                    state = state.GOING_T0_BANK;
+                }
+                break;
+            case GOING_T0_BANK:
+                Widget bank = client.getWidget(WidgetInfo.BANK_CONTAINER);
+                if(bank != null && !bank.isHidden()  ) {
+                    state = state.BANKING;
+                }
+                break;
+            case BANKING:
+                if(juteInInventory.result().size() >= 28) {
+                    state = state.RETURNING;
+                }
+                break;
+            case RETURNING:
+                Optional<Widget> craftingInterface = Widgets.search().withTextContains("many do you").first();
+                if(craftingInterface.isPresent()) {
+                    state = State.CRAFTING;
+                }
+                break;
+        }
+    }
+    private void updateValues() {
+        driftNetsInBank = Bank.search().nameContains("Drift net");
+        juteInBank = Bank.search().nameContains("Jute fibre");
+        juteInInventory = Inventory.search().nameContains("Jute fibre");
+
+    }
+
+
+    private void executeState() {
+        if(EthanApiPlugin.isMoving()) {
+            return;
+        }
+
+        switch(state) {
+            case CRAFTING:
+                if (client.getLocalPlayer().getAnimation() != -1) {
+                    idleTicks++;
+                }
+                if(idleTicks > 2 ) {
+                    MousePackets.queueClickPacket();
+                    WidgetPackets.queueResumePause((270 << 16) | 16, 14);
+                }
+                break;
+            case GOING_T0_BANK:
+                findBank();
+                break;
+            case BANKING:
+                Widget depositInventory = client.getWidget(WidgetInfo.BANK_DEPOSIT_INVENTORY);
+                if (depositInventory != null) {
+                    MousePackets.queueClickPacket();
+                    WidgetPackets.queueWidgetAction(depositInventory, "Deposit inventory");
+                }
+                Bank.search().withName("Jute fibre").first().ifPresentOrElse(item -> {
+                    MousePackets.queueClickPacket();
+                    BankInteraction.useItem(item, "Withdraw-all");
+                }, () -> {
+                    client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "No Jute fibres in bank!", null);
+                    EthanApiPlugin.stopPlugin(this);
+                });
+                break;
+
+            case BANKING_STAMINA:
+                Bank.search().withName("Stamina").first().ifPresentOrElse(item -> {
+                    MousePackets.queueClickPacket();
+                    BankInteraction.useItem(item, "Withdraw-1");
+                    Optional<Widget> stam = Inventory.search().nameContains("Stamina").withAction("Drink").first();
+                    stam.ifPresent(widget -> InventoryInteraction.useItem(widget, "Drink"));
+                }, () -> {
+                    client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "No Jute fibres in bank!", null);
+                    EthanApiPlugin.stopPlugin(this);
+                });
+
+                Widget depositInventoryStam = client.getWidget(WidgetInfo.BANK_DEPOSIT_INVENTORY);
+                if (depositInventoryStam != null) {
+                    MousePackets.queueClickPacket();
+                    WidgetPackets.queueWidgetAction(depositInventoryStam, "Deposit inventory");
+                }
+
+                Bank.search().withName("Jute fibre").first().ifPresentOrElse(item -> {
+                    MousePackets.queueClickPacket();
+                    BankInteraction.useItem(item, "Withdraw-all");
+                }, () -> {
+                    client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "No Jute fibres in bank!", null);
+                    EthanApiPlugin.stopPlugin(this);
+                });
+                break;
+            case RETURNING:
+                TileObject loom = TileObjects.search().withAction("Weave").first().orElse(null);
+                if (loom != null) {
+                    MousePackets.queueClickPacket();
+                    TileObjectInteraction.interact(loom, "Weave");
+                }
+                break;
+        }
+
+
+    }
+
+
 
 
     @Subscribe
     private void onGameTick(GameTick event) {
-        if (client.getLocalPlayer().getAnimation() != -1) {
-            return;
-        }
-
-        if (isInteractingWithLoom) {
-            ticksSinceLastLoomClick++;
-            // After 10 ticks (~6 seconds), assume interaction failed and reset
-            if (ticksSinceLastLoomClick > 10) {
-                isInteractingWithLoom = false;
-            }
-            return;
-        }
-
-        if(isBankOpen()) {
-            Widget depositInventory = client.getWidget(WidgetInfo.BANK_DEPOSIT_INVENTORY);
-            if (depositInventory != null) {
-                MousePackets.queueClickPacket();
-                WidgetPackets.queueWidgetAction(depositInventory, "Deposit inventory");
-            }
-            Bank.search().withName("Jute fibre").first().ifPresentOrElse(item -> {
-                BankInteraction.withdrawX(item, 28);
-            }, () -> {
-                client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "No Jute fibres in bank!", null);
-                EthanApiPlugin.stopPlugin(this);
-            });
-        }
-
-        if (!Inventory.search().withName("Jute fibre").empty()) {
-            TileObject loom = TileObjects.search().withAction("Weave").first().orElse(null);
-            if (loom != null) {
-                MousePackets.queueClickPacket();
-                TileObjectInteraction.interact(loom, "Weave");
-                // Mark that we just clicked the loom and reset the counter
-                isInteractingWithLoom = true;
-                ticksSinceLastLoomClick = 0;
-            }
-        } else {
-            findBank();
-        }
-
+        updateValues();
+        evaluteState();
+        executeState();
+        System.out.println("" + state);
     }
-
-
-    @Subscribe
-    public void onWidgetLoaded(WidgetLoaded event) {
-        if (event.getGroupId() == 270) {
-
-            Widget driftNet = client.getWidget(270, 16);
-            Widget[] children = driftNet.getDynamicChildren();
-
-            Optional<Widget> driftnet = Widgets.search().hiddenState(false).withAction("Make").first();
-            
-
-            client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", ""+ driftnet.get().getId(), null);
-
-            //Widget realnigga = Arrays.stream(children).filter(child -> child.getName().contains("Drift net") == true).collect(Collectors.toList())[0];
-
-
-
-
-
-        }
-    }
-
 
 
     private void findBank(){
@@ -120,14 +194,17 @@ public class RoccoDriftNetCrafter extends Plugin {
         Optional<NPC> banker = NPCs.search().withAction("Bank").nearestToPlayer();
         Optional<TileObject> booth = TileObjects.search().withAction("Bank").nearestToPlayer();
         if (chest.isPresent()){
+            MousePackets.queueClickPacket();
             TileObjectInteraction.interact(chest.get(), "Use");
             return;
         }
         if (booth.isPresent()){
+            MousePackets.queueClickPacket();
             TileObjectInteraction.interact(booth.get(), "Bank");
             return;
         }
         if (banker.isPresent()){
+            MousePackets.queueClickPacket();
             NPCInteraction.interact(banker.get(), "Bank");
             return;
         }
@@ -136,22 +213,7 @@ public class RoccoDriftNetCrafter extends Plugin {
             EthanApiPlugin.stopPlugin(this);
         }
     }
-    private void pressSpace() {
-        KeyEvent keyPress = new KeyEvent(this.client.getCanvas(), KeyEvent.KEY_PRESSED, System.currentTimeMillis(), 0, KeyEvent.VK_SPACE, KeyEvent.CHAR_UNDEFINED);
-        this.client.getCanvas().dispatchEvent(keyPress);
-        KeyEvent keyRelease = new KeyEvent(this.client.getCanvas(), KeyEvent.KEY_RELEASED, System.currentTimeMillis(), 0, KeyEvent.VK_SPACE, KeyEvent.CHAR_UNDEFINED);
-        this.client.getCanvas().dispatchEvent(keyRelease);
-        KeyEvent keyTyped = new KeyEvent(this.client.getCanvas(), KeyEvent.KEY_TYPED, System.currentTimeMillis(), 0, KeyEvent.VK_SPACE, KeyEvent.CHAR_UNDEFINED);
-        this.client.getCanvas().dispatchEvent(keyTyped);
-    }
 
-    private boolean hasJuteInBank() {
-        return Bank.search().nameContains("Jute fibre").first().isPresent();
-    }
-
-    private boolean hasJuteInInventory() {
-        return Inventory.search().nameContains("Jute fibre").first().isPresent();
-    }
 
     private boolean isBankOpen() {
         Widget bank = client.getWidget(WidgetInfo.BANK_CONTAINER);
